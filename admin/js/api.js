@@ -89,6 +89,14 @@ changePassword(currentPassword, newPassword) {
   deleteProfilePicture() {
     return apiRequest('/api/profile/picture', { method: 'DELETE', auth: true });
   },
+  uploadResume(file) {
+    const fd = new FormData();
+    fd.append('resume', file);
+    return apiRequest('/api/profile/resume', { method: 'POST', auth: true, isFormData: true, body: fd });
+  },
+  deleteResume() {
+    return apiRequest('/api/profile/resume', { method: 'DELETE', auth: true });
+  },
 
   // ---------- Projects ----------
   getProjects() { return apiRequest('/api/projects'); },

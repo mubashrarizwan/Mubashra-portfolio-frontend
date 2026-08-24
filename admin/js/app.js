@@ -75,6 +75,23 @@ function placeholderPic() {
   );
 }
 
+// Shows/hides the "View current résumé" link vs the "No résumé uploaded
+// yet" hint on the Profile page, based on the current resumeUrl.
+function updateResumeUI(resumeUrl) {
+  const link = document.getElementById('resumeLink');
+  const empty = document.getElementById('resumeEmpty');
+  if (link) {
+    if (resumeUrl) {
+      link.href = window.assetUrl(resumeUrl);
+      link.style.display = '';
+    } else {
+      link.href = '#';
+      link.style.display = 'none';
+    }
+  }
+  if (empty) empty.style.display = resumeUrl ? 'none' : '';
+}
+
 // Resizes/compresses a picked image file down to a reasonable size before
 // it's stored as a base64 string, so it doesn't get rejected by the
 // backend for being too large.
@@ -206,8 +223,8 @@ async function loadProfile() {
     setVal('pLinkedin', p.linkedin || '');
     setVal('pTwitter', p.twitter || '');
     setVal('pWebsite', p.website || '');
-    setVal('pResumeUrl', p.resumeUrl || '');
     setSrc('profilePicPreview', p.profilePicture ? window.assetUrl(p.profilePicture) : placeholderPic());
+    updateResumeUI(p.resumeUrl || '');
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -229,7 +246,6 @@ function initProfile() {
       linkedin: getVal('pLinkedin'),
       twitter: getVal('pTwitter'),
       website: getVal('pWebsite'),
-      resumeUrl: getVal('pResumeUrl'),
     };
     try {
       await Api.updateProfile(data);
@@ -264,6 +280,36 @@ function initProfile() {
       await Api.deleteProfilePicture();
       setSrc('profilePicPreview', placeholderPic());
       showToast('Profile picture removed.');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  });
+
+  on('resumeUploadBtn', 'click', () => {
+    const input = document.getElementById('resumeInput');
+    if (input) input.click();
+  });
+
+  on('resumeInput', 'change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      const res = await Api.uploadResume(file);
+      updateResumeUI(res.data.resumeUrl || '');
+      showToast('Résumé updated.');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      e.target.value = '';
+    }
+  });
+
+  on('resumeDeleteBtn', 'click', async () => {
+    if (!confirm('Remove the résumé?')) return;
+    try {
+      await Api.deleteResume();
+      updateResumeUI('');
+      showToast('Résumé removed.');
     } catch (err) {
       showToast(err.message, 'error');
     }
