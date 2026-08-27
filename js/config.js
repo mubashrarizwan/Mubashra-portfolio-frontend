@@ -9,7 +9,7 @@
  * ---------------------------------------------------------
  */
 window.APP_CONFIG = {
-  API_BASE_URL: localStorage.getItem('api_base_url') || 'https://site--backend--4r74c4fpxnpv.code.run',
+  API_BASE_URL: localStorage.getItem('api_base_url') || 'https://api.mubashrarizwan.dev',
 };
 
 window.getApiBase = function () {
