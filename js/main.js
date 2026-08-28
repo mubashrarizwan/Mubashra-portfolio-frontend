@@ -65,9 +65,19 @@
   const state = {};
 
   // ---------- Fetch helpers ----------
-  async function safeGet(path, fallback) {
+  // NOTE: wrapped with a timeout. Without this, a slow/blocked API call
+  // (common for crawlers / restricted network sandboxes like Googlebot's)
+  // could leave `init()` waiting forever, which meant initReveal() never
+  // ran and the whole page stayed invisible. Now every request gives up
+  // after 4s and falls back to demo data instead of hanging.
+  async function safeGet(path, fallback, timeoutMs = 4000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const res = await fetch(`${API()}${path}`, { headers: { Accept: 'application/json' } });
+      const res = await fetch(`${API()}${path}`, {
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
       if (!res.ok) throw new Error('bad status');
       const json = await res.json();
       const data = json.data;
@@ -76,6 +86,8 @@
       return data || fallback;
     } catch (e) {
       return fallback;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -235,6 +247,9 @@
           </div>`).join('')}
       </div>`).join('');
     document.getElementById('skillsCats').innerHTML = html || '<p style="color:var(--text-dim)">Skills coming soon.</p>';
+    // Newly-injected bars need the fade-in fill triggered (page may already
+    // have scrolled past this section by the time data arrives).
+    document.querySelectorAll('#skillsCats .skill-bar-fill').forEach(b => { b.style.width = b.dataset.pct + '%'; });
   }
 
   // ---------- Projects slider + grid ----------
@@ -428,20 +443,48 @@
       </div>`).join('');
   }
 
-  // ---------- Reveal on scroll ----------
+  // ---------- Reveal on scroll (SEO-SAFE) ----------
+  // Content is visible by default in CSS now (see style.css). This function
+  // only ADDS the ".pre" (pre-animation, hidden) state right before it starts
+  // observing, then removes it once each element scrolls into view — giving
+  // the same fade/slide effect for real visitors. If this function never
+  // runs (JS error, blocked script, crawler timeout, etc.), nothing is ever
+  // hidden in the first place, so search engines always see full content.
   function initReveal() {
     const items = document.querySelectorAll('.reveal');
+    if (!items.length) return;
+
+    if (!('IntersectionObserver' in window)) {
+      // No IO support (very old browser / unusual crawler) — leave content
+      // visible as-is, skip the animation entirely. Safe by default.
+      return;
+    }
+
+    items.forEach(i => i.classList.add('pre'));
+
     const io = new IntersectionObserver((entries) => {
       entries.forEach(e => {
         if (e.isIntersecting) {
+          e.target.classList.remove('pre');
           e.target.classList.add('in');
-          // animate skill bars within
           e.target.querySelectorAll('.skill-bar-fill').forEach(b => { b.style.width = b.dataset.pct + '%'; });
           io.unobserve(e.target);
         }
       });
     }, { threshold: 0.15 });
     items.forEach(i => io.observe(i));
+
+    // Fail-safe: if for any reason an element never intersects (e.g. a
+    // renderer that doesn't scroll/resize, or content injected after the
+    // observer set up), force-reveal everything still hidden after 3s so
+    // nothing is left permanently invisible.
+    setTimeout(() => {
+      document.querySelectorAll('.reveal.pre').forEach(el => {
+        el.classList.remove('pre');
+        el.classList.add('in');
+        el.querySelectorAll('.skill-bar-fill').forEach(b => { b.style.width = b.dataset.pct + '%'; });
+      });
+    }, 3000);
   }
 
   // ---------- Premium star + sprinkle ambience ----------
@@ -521,32 +564,45 @@
     initStarField();
     initDeckViewer();
 
-    // Fetch everything in parallel, but don't make the hero terminal wait on
-    // the slowest one — render the profile (and start the typing effect)
-    // the moment it's ready, while projects/skills/etc. keep loading.
-    const profilePromise = safeGet('/api/profile', FALLBACK.profile);
-    const projectsPromise = safeGet('/api/projects', FALLBACK.projects);
-    const skillsPromise = safeGet('/api/skills', FALLBACK.skills);
-    const experiencePromise = safeGet('/api/experience', FALLBACK.experience);
-    const educationPromise = safeGet('/api/education', FALLBACK.education);
-    const coursesPromise = safeGet('/api/courses', FALLBACK.courses);
-
-    const profile = await profilePromise;
-    renderProfile(profile);
-
-    const [projects, skills, experience, education, courses] = await Promise.all([
-      projectsPromise, skillsPromise, experiencePromise, educationPromise, coursesPromise,
-    ]);
-
-    renderStats({ projects, skills, experience });
-    renderSkills(skills);
-    updateTerminalSkills(skills);
-    renderProjects(projects);
-    renderTimeline('experienceTimeline', [...experience].sort((a, b) => new Date(b.startDate) - new Date(a.startDate)), 'experience');
-    renderTimeline('educationTimeline', [...education].sort((a, b) => new Date(b.startDate) - new Date(a.startDate)), 'education');
-    renderCourses([...courses].sort((a, b) => (a.order || 0) - (b.order || 0)));
-
+    // IMPORTANT: reveal is initialized immediately, independent of any
+    // network/API calls below. Previously this ran only after all backend
+    // fetches resolved — if one hung (slow API, blocked in a crawler
+    // sandbox, etc.) the whole page stayed invisible forever. Now the
+    // animation system starts right away, and content is visible by
+    // default anyway (see the CSS), so nothing can get stuck hidden.
     initReveal();
+
+    try {
+      // Fetch everything in parallel, but don't make the hero terminal wait on
+      // the slowest one — render the profile (and start the typing effect)
+      // the moment it's ready, while projects/skills/etc. keep loading.
+      const profilePromise = safeGet('/api/profile', FALLBACK.profile);
+      const projectsPromise = safeGet('/api/projects', FALLBACK.projects);
+      const skillsPromise = safeGet('/api/skills', FALLBACK.skills);
+      const experiencePromise = safeGet('/api/experience', FALLBACK.experience);
+      const educationPromise = safeGet('/api/education', FALLBACK.education);
+      const coursesPromise = safeGet('/api/courses', FALLBACK.courses);
+
+      const profile = await profilePromise;
+      renderProfile(profile);
+
+      const [projects, skills, experience, education, courses] = await Promise.all([
+        projectsPromise, skillsPromise, experiencePromise, educationPromise, coursesPromise,
+      ]);
+
+      renderStats({ projects, skills, experience });
+      renderSkills(skills);
+      updateTerminalSkills(skills);
+      renderProjects(projects);
+      renderTimeline('experienceTimeline', [...experience].sort((a, b) => new Date(b.startDate) - new Date(a.startDate)), 'experience');
+      renderTimeline('educationTimeline', [...education].sort((a, b) => new Date(b.startDate) - new Date(a.startDate)), 'education');
+      renderCourses([...courses].sort((a, b) => (a.order || 0) - (b.order || 0)));
+    } catch (e) {
+      // Even if something above throws unexpectedly, the page itself
+      // (nav, star field, reveal animation) has already initialized and
+      // stays fully visible and usable.
+      console.error('Content load failed, showing fallback state:', e);
+    }
   }
 
   document.addEventListener('DOMContentLoaded', init);
